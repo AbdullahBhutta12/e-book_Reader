@@ -1,0 +1,11 @@
+include: package:flutter_lints/flutter.yaml
+
+# This file tells the Dart analyzer (the tool that powers red squiggly
+# lines in your editor) which rules to enforce. `flutter_lints` is Google's
+# official recommended rule set — it's the same baseline used across
+# Flutter's own sample apps and most professional codebases.
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_literals_to_create_immutables: true
+    avoid_print: true

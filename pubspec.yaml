@@ -1,0 +1,39 @@
+name: ebook_reader
+description: A professional Flutter e-book reader with text-to-speech and read-along highlighting.
+publish_to: 'none' # We are not publishing this to pub.dev, it's a private app.
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # google_fonts: lets us use professional, non-default typefaces (Poppins,
+  # Inter) without manually bundling .ttf font files. Official Flutter
+  # Favorite package, actively maintained by the Flutter ecosystem team.
+  google_fonts: ^6.2.1
+
+  # cupertino_icons: ships by default with every new Flutter project, gives
+  # access to iOS-style icons in addition to Material icons. Kept for
+  # compatibility even though this app targets Android first.
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # flutter_lints: Google's official, recommended set of lint rules for
+  # Flutter projects. It catches common mistakes (unused imports, missing
+  # `const`, etc.) before they become bugs. Every production Flutter repo
+  # should have this.
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Asset folders will be used starting Module 2 (e.g. placeholder cover
+  # images). Declared now so the folder structure is ready.
+  assets:
+    - assets/images/
