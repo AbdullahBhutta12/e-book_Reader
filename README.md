@@ -1,16 +1,23 @@
-# E-Book Reader — Module 2
+# E-Book Reader — Module 3
 
 This zip contains the `lib/` source files, `pubspec.yaml`, and
-`analysis_options.yaml` through Module 2 (Home Screen + working Import
-Book flow + Reader Screen showing file metadata). It is **not** a full
-`flutter create` output — you need to generate the native Android/iOS
-scaffolding yourself, then drop these files in.
+`analysis_options.yaml` through Module 3 (Home Screen + Import Book +
+Reader Screen that now displays actual book content for `.txt` files).
+It is **not** a full `flutter create` output — you need to generate the
+native Android/iOS scaffolding yourself, then drop these files in.
 
-## What's new since Module 1
-- Added `file_picker: ^11.0.2` to `pubspec.yaml` — run `flutter pub get`
+## What's new since Module 2
+- Added `provider: ^6.1.5+1` to `pubspec.yaml` — run `flutter pub get`
   after copying these files in.
-- No `AndroidManifest.xml` changes are required (see the chat explanation
-  for why).
+- The Reader screen now extracts and displays a `.txt` book's actual
+  text instead of only showing its metadata. File metadata moved to an
+  on-demand "book details" sheet (tap the ⓘ icon in the Reader screen's
+  AppBar).
+- `.pdf` and `.epub` files still import successfully (Module 2), but the
+  Reader screen now shows an honest "not supported for reading yet"
+  state for them — full support is planned for a later version.
+- A sample file is included at `sample_books/the_lighthouse_keepers_notebook.txt`
+  — import that one first to see the reading view working immediately.
 
 ## How to run this on your machine
 

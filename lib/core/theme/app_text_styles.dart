@@ -45,4 +45,21 @@ class AppTextStyles {
         fontWeight: FontWeight.w600,
         color: AppColors.textPrimary,
       );
+
+  /// Body text for the actual book-reading view.
+  ///
+  /// WHY A SEPARATE STYLE (AND A SEPARATE TYPEFACE) FROM THE REST OF THE
+  /// APP: `heading`/`subheading`/`button` above are UI chrome — buttons,
+  /// titles, labels — where a clean sans-serif (Poppins/Inter) looks
+  /// modern. Long-form reading is a different job: serif typefaces with
+  /// generous line height (`height: 1.6` here, vs. `1.3`–`1.5` for UI
+  /// text) are consistently easier to read for extended passages of text
+  /// — this is why e-readers and reading apps almost universally use a
+  /// serif body font even when their surrounding UI doesn't. "Lora" is a
+  /// Google Fonts serif designed specifically for on-screen body text.
+  static TextStyle get readingBody => GoogleFonts.lora(
+        fontSize: 17,
+        height: 1.6,
+        color: AppColors.textPrimary,
+      );
 }
