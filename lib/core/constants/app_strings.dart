@@ -20,6 +20,25 @@ class AppStrings {
 
   static const String importButtonLabel = 'Import Book';
 
-  static const String comingSoonMessage =
-      'File picker will be connected in Module 2 🚀';
+  // --- Import feedback -----------------------------------------------
+  // AppStrings.comingSoonMessage from Module 1 has been removed: the
+  // import button is now fully functional, so that placeholder string is
+  // dead code. Keeping unused strings around is clutter a future reader
+  // has to figure out is safe to ignore.
+
+  static const String importGenericError =
+      'Something went wrong while importing your file. Please try again.';
+
+  /// Takes the raw extension so the message can name it specifically,
+  /// e.g. "Unsupported file type: .mobi".
+  static String unsupportedFormatMessage(String extension) =>
+      'Unsupported file type: .$extension\n'
+      'Supported formats: PDF, EPUB, TXT.';
+
+  // --- Reader screen ----------------------------------------------------
+  static const String readerScreenTitle = 'Book Details';
+  static const String labelFileName = 'File Name';
+  static const String labelFileSize = 'File Size';
+  static const String labelFilePath = 'File Path';
+  static const String labelFileExtension = 'File Extension';
 }

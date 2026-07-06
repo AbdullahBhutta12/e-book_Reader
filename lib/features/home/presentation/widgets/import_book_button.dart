@@ -16,6 +16,7 @@ class ImportBookButton extends StatelessWidget {
   const ImportBookButton({
     super.key,
     required this.onPressed,
+    this.isLoading = false,
   });
 
   /// Callback fired when the user taps the button.
@@ -24,9 +25,18 @@ class ImportBookButton extends StatelessWidget {
   /// hard-coded here. This widget doesn't need to know WHAT happens on
   /// tap — only that something does. This "callback pattern" is central
   /// to how Flutter widgets stay decoupled and reusable: the button
-  /// doesn't care if it's opening a file picker, showing a dialog, or (as
-  /// in this module) just a SnackBar.
+  /// doesn't care if it's opening a file picker or showing a dialog.
   final VoidCallback onPressed;
+
+  /// Whether an import is currently in progress.
+  ///
+  /// NOTE: this widget still has NO business logic of its own — it
+  /// doesn't know *why* it's loading, or call file_picker itself. It just
+  /// renders differently based on a flag its parent hands it. The parent
+  /// (`HomeScreen`) owns the actual state; this widget stays "dumb" and
+  /// purely presentational, which is what keeps it easy to test and
+  /// reuse.
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -37,9 +47,24 @@ class ImportBookButton extends StatelessWidget {
       width: double.infinity,
       height: 64,
       child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: const Icon(Icons.file_upload_outlined, size: 24),
-        label: const Text(AppStrings.importButtonLabel),
+        // Passing `null` to onPressed is Flutter's built-in way to
+        // disable a button — no separate "enabled" flag needed. While
+        // loading, this prevents the user from firing a second file-pick
+        // request on top of one that's already running.
+        onPressed: isLoading ? null : onPressed,
+        icon: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(Icons.file_upload_outlined, size: 24),
+        label: Text(
+          isLoading ? 'Importing…' : AppStrings.importButtonLabel,
+        ),
       ),
     );
   }

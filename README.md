@@ -1,9 +1,16 @@
-# E-Book Reader — Module 1
+# E-Book Reader — Module 2
 
 This zip contains the `lib/` source files, `pubspec.yaml`, and
-`analysis_options.yaml` for Module 1 only (the Home Screen UI shell).
-It is **not** a full `flutter create` output — you need to generate the
-native Android/iOS scaffolding yourself, then drop these files in.
+`analysis_options.yaml` through Module 2 (Home Screen + working Import
+Book flow + Reader Screen showing file metadata). It is **not** a full
+`flutter create` output — you need to generate the native Android/iOS
+scaffolding yourself, then drop these files in.
+
+## What's new since Module 1
+- Added `file_picker: ^11.0.2` to `pubspec.yaml` — run `flutter pub get`
+  after copying these files in.
+- No `AndroidManifest.xml` changes are required (see the chat explanation
+  for why).
 
 ## How to run this on your machine
 
