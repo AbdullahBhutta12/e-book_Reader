@@ -1,3 +1,5 @@
+import 'supported_book_format.dart';
+
 /// Immutable, validated representation of a book file the user picked
 /// from their device.
 ///
@@ -16,21 +18,34 @@ class BookFile {
   const BookFile({
     required this.name,
     required this.path,
-    required this.extension,
+    required this.format,
     required this.sizeInBytes,
   });
 
   /// Display name, e.g. "Pride and Prejudice.epub".
   final String name;
 
-  /// Absolute path to the file on-device. Module 3 will use this to
-  /// actually open and read the file's contents.
+  /// Absolute path to the file on-device. Module 3 uses this to actually
+  /// open and read the file's contents.
   final String path;
 
-  /// Lowercase extension with no dot, e.g. "epub". Guaranteed by
-  /// `BookImportService` to always be one of `SupportedBookFormat`'s
-  /// values by the time a `BookFile` is ever constructed.
-  final String extension;
+  /// This book's recognized format.
+  ///
+  /// STABILITY PATCH: this used to be a raw `String extension` with a doc
+  /// comment saying it was "guaranteed by BookImportService to always be
+  /// one of SupportedBookFormat's values." That guarantee was only true
+  /// by convention — nothing stopped a future edit to
+  /// `BookImportService` from constructing a `BookFile` with an
+  /// unvalidated string. Storing the enum itself instead of a string
+  /// makes the guarantee impossible to violate: there is no
+  /// `BookFile(format: 'mobi')` you could accidentally write, because
+  /// `'mobi'` isn't a `SupportedBookFormat` value. This is the "make
+  /// invalid states unrepresentable" principle — moving an invariant out
+  /// of a comment and into the type system.
+  ///
+  /// The original raw extension string is never lost — it's always
+  /// available as `format.extension` (see `SupportedBookFormat`).
+  final SupportedBookFormat format;
 
   /// Raw file size in bytes, exactly as reported by the OS.
   final int sizeInBytes;

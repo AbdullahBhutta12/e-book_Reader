@@ -51,17 +51,52 @@ class AppStrings {
   static const String readerEmptyBookMessage =
       'This file doesn\'t contain any readable text.';
 
-  static const String readerUnsupportedFormatTitle =
-      'This format isn\'t supported for reading yet';
+  static const String readerNotYetReadableTitle =
+      'This format isn\'t readable yet';
 
   /// Takes the raw extension so the message can name it specifically.
-  static String readerUnsupportedFormatBody(String extension) =>
-      '.$extension files can be imported, but reading them aloud isn\'t '
-      'supported in this version yet. TXT files are fully supported — '
-      'PDF and EPUB support is planned for a future update.';
+  ///
+  /// STABILITY PATCH: reworded to explicitly say the file WAS recognized
+  /// and imported successfully — earlier wording ("isn't supported for
+  /// reading") could read as if the file itself were rejected or
+  /// invalid, when in fact it's sitting safely in the user's library,
+  /// recognized as a real book; we simply can't extract its text yet.
+  static String readerNotYetReadableBody(String extension) =>
+      'This .$extension file was recognized and imported successfully. '
+      'Reading it aloud isn\'t supported in this version yet — TXT files '
+      'are fully supported today, and PDF/EPUB support is planned for a '
+      'future update.';
 
   static const String readerLoadFailureTitle = 'Couldn\'t open this book';
   static const String readerLoadFailureMessage =
       'This book could not be opened. It may have been moved, deleted, '
       'or is not readable right now.';
+
+  // --- Text-to-speech: playback controls --------------------------------
+  static const String ttsPlayLabel = 'Play';
+  static const String ttsPauseLabel = 'Pause';
+  static const String ttsStopLabel = 'Stop';
+
+  // --- Text-to-speech: persistent "can't use it at all right now" states.
+  // Shown inline in place of the control bar — these describe a standing
+  // condition, not a one-off event, so a SnackBar would be the wrong tool
+  // (it disappears; the condition doesn't).
+  static const String ttsUnavailableMessage =
+      'Text-to-speech isn\'t available on this device.';
+
+  /// Takes the language code so the message can name it specifically.
+  static String ttsUnsupportedLanguageMessage(String languageCode) =>
+      'This device doesn\'t have the $languageCode voice installed for '
+      'text-to-speech. Please install it from your device\'s language '
+      'settings.';
+
+  static const String ttsInitGenericError =
+      'Text-to-speech failed to start. Please restart the app and try '
+      'again.';
+
+  // --- Text-to-speech: transient, one-off errors during playback. Shown
+  // as a SnackBar (see AppSnackbar) since these describe a single event
+  // that already happened, not an ongoing condition.
+  static const String ttsPlaybackErrorMessage =
+      'Something went wrong while reading this book aloud.';
 }

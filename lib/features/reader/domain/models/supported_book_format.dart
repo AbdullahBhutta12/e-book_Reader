@@ -1,4 +1,24 @@
-/// Every book file format this app currently knows how to open.
+/// Every book file format this app RECOGNIZES — i.e. every format
+/// `BookImportService` will accept at import time.
+///
+/// STABILITY PATCH — "recognized" vs. "readable" are two separate
+/// questions, and it matters that this enum only answers the first one:
+///   - RECOGNIZED = "is this a real book format we know about?" — that's
+///     exactly what this enum's three values (`pdf`, `epub`, `plainText`)
+///     represent. All three are recognized, and `BookImportService`
+///     accepts all three.
+///   - READABLE (in this version) = "do we have a `TextExtractor` that
+///     can actually open and display it yet?" — that's a SEPARATE
+///     question, answered entirely by `TextExtractorFactory`, not by
+///     this enum. Only `plainText` has an extractor registered in V1.
+/// Keeping "readable" out of this enum (no `isReadable` flag here) is
+/// deliberate: `TextExtractorFactory` is the one place that knows which
+/// extractors exist, so it's the one place that should ever answer
+/// "readable." Adding a second, separate flag here would create two
+/// sources of truth that could quietly drift out of sync — e.g. someone
+/// adds a working `PdfExtractor` to the factory but forgets to flip a
+/// flag over here, and the app would keep telling users PDF isn't
+/// readable even though it now is.
 ///
 /// WHY AN ENUM INSTEAD OF A RAW `List<String>` OF EXTENSIONS:
 /// A `List<String>` like `['pdf', 'epub', 'txt']` has no compiler backing —
@@ -25,15 +45,17 @@ enum SupportedBookFormat {
   /// Lowercase extension with no leading dot, e.g. "pdf".
   final String extension;
 
-  /// All supported extensions, ready to hand directly to file_picker's
+  /// All recognized extensions, ready to hand directly to file_picker's
   /// `allowedExtensions` parameter.
   static List<String> get allExtensions =>
       values.map((format) => format.extension).toList();
 
   /// Matches a raw extension string (as returned by file_picker) to one
-  /// of our known formats. Returns `null` if it's not one we support —
-  /// callers use that `null` to trigger the "unsupported format" error
-  /// path rather than crashing on an unmatched format.
+  /// of our known formats. Returns `null` if it's not one we recognize at
+  /// all — callers use that `null` to trigger the "unrecognized format"
+  /// rejection path at import time, rather than crashing on an unmatched
+  /// format. This is a DIFFERENT case from "recognized but not yet
+  /// readable" — see `TextExtractorFactory` for that one.
   static SupportedBookFormat? fromExtension(String extension) {
     final normalized = extension.toLowerCase();
     for (final format in values) {

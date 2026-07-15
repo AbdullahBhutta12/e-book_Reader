@@ -6,14 +6,21 @@ import 'plain_text_extractor.dart';
 /// or reports that none exists yet.
 ///
 /// This is the single place in the whole app that knows "which concrete
-/// extractor handles which format." Adding PDF or EPUB support later
-/// means writing a new extractor class and adding ONE new case here —
-/// nothing else in the app changes.
+/// extractor handles which format" — equivalently, this class IS the
+/// definition of "readable in this version" (see [SupportedBookFormat]'s
+/// doc comment for why that's kept separate from "recognized"). Adding
+/// PDF or EPUB support later means writing a new extractor class (e.g.
+/// `PdfExtractor`, `EpubExtractor`) and changing the two lines below that
+/// currently `return null` for them — nothing in `BookReaderController`,
+/// `ReaderScreen`, or any other file needs to change at all.
 class TextExtractorFactory {
   const TextExtractorFactory();
 
   /// Returns the extractor for [format], or `null` if this version of
-  /// the app doesn't know how to read that format yet.
+  /// the app doesn't know how to read that format yet. A `null` here is
+  /// the ONLY thing that means "not yet readable" anywhere in the app —
+  /// callers turn it into a [BookContentNotYetReadable] result rather
+  /// than treating it as an error.
   ///
   /// WHY THIS SWITCH HAS NO `default:` CASE:
   /// Same Dart 3 exhaustiveness guarantee we relied on in Module 2. Every

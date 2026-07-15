@@ -1,4 +1,5 @@
 import 'book_content.dart';
+import 'supported_book_format.dart';
 
 /// Every possible outcome of attempting to load and extract a book's
 /// content for display.
@@ -17,20 +18,28 @@ final class BookContentLoaded extends BookContentResult {
   final BookContent content;
 }
 
-/// This book's file format doesn't have a [TextExtractor] registered yet.
+/// This book's format is RECOGNIZED (it's a real [SupportedBookFormat]
+/// value — `.pdf`, `.epub`, or `.txt`) but doesn't have a [TextExtractor]
+/// registered yet, so it can't be READ in this version.
 ///
-/// This is the case for `.pdf` and `.epub` in V1 — they were valid,
-/// recognized formats back in Module 2's import step, but Module 3 only
-/// ships a plain-text extractor. This is NOT a bug or a crash — it's an
-/// honest, expected state the UI shows the user.
-final class BookContentUnsupportedFormat extends BookContentResult {
-  const BookContentUnsupportedFormat(this.extension);
-  final String extension;
+/// STABILITY PATCH — naming: this class used to be called
+/// `BookContentUnsupportedFormat`, which reads as if the file itself is
+/// invalid. It isn't — `BookImportService` already validated it as a
+/// real, recognized book format back at import time; "recognized" and
+/// "readable" are two different, separate questions, and this type only
+/// ever represents the second one being "not yet." The rename to
+/// `BookContentNotYetReadable` says that directly, and the field is now
+/// the actual [SupportedBookFormat] enum (guaranteed valid, since it can
+/// only ever be `pdf` or `epub` — `TextExtractorFactory` never returns
+/// `null` for `.txt`) instead of a raw extension string.
+final class BookContentNotYetReadable extends BookContentResult {
+  const BookContentNotYetReadable(this.format);
+  final SupportedBookFormat format;
 }
 
-/// The format was supported, but reading the file itself failed (e.g.
-/// the file was moved or deleted after import, a permissions error, or
-/// corrupted content).
+/// The format was recognized AND readable, but reading the file itself
+/// failed (e.g. the file was moved or deleted after import, a
+/// permissions error, or corrupted content).
 final class BookContentLoadFailure extends BookContentResult {
   const BookContentLoadFailure(this.message);
   final String message;

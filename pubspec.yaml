@@ -36,6 +36,16 @@ dependencies:
   # (docs.flutter.dev/data-and-backend/state-mgmt/simple).
   provider: ^6.1.5+1
 
+  # flutter_tts: reads book content aloud using each platform's own native
+  # engine (Android TextToSpeech / iOS AVSpeechSynthesizer). Verified
+  # publisher, actively maintained (latest stable release 4.2.5, MIT
+  # licensed, 1.58k+ likes). Chosen specifically because it's the only
+  # Flutter TTS package with genuine start/pause/completion/error/cancel
+  # callbacks across Android and iOS — exactly the event model Module 4's
+  # playback state machine is built on, and the same callback family
+  # Module 5's word highlighting will extend.
+  flutter_tts: ^4.2.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

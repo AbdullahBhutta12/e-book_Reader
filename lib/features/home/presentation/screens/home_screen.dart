@@ -50,7 +50,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleImportPressed() async {
     setState(() => _isImporting = true);
 
-    final BookImportResult result = await widget._importService.pickBook();
+    // STABILITY PATCH: BookImportService.pickBook() now guarantees it
+    // never throws — every failure it can hit is already converted into
+    // a BookImportFailure. This try/catch is a second, deliberately
+    // redundant safety net, not a sign we don't trust that guarantee:
+    // `_importService` is an injected dependency (see the constructor
+    // above), so nothing at compile time stops a future test, or a
+    // future second implementation, from throwing anyway. Catching here
+    // too means THIS screen's core promise — the button never gets
+    // stuck spinning — holds regardless of what's injected.
+    BookImportResult result;
+    try {
+      result = await widget._importService.pickBook();
+    } catch (_) {
+      result = const BookImportFailure(AppStrings.importGenericError);
+    }
 
     // Guard: if this screen has been removed from the widget tree while
     // we were awaiting the file picker (e.g. the user navigated away),

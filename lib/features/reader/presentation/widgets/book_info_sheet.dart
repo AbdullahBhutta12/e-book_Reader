@@ -90,7 +90,7 @@ class BookInfoSheet extends StatelessWidget {
               BookDetailTile(
                 icon: Icons.info_outlined,
                 label: AppStrings.labelFileExtension,
-                value: book.extension.toUpperCase(),
+                value: book.format.extension.toUpperCase(),
               ),
             ],
           ),

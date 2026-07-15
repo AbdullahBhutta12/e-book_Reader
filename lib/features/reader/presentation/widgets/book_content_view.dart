@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../domain/models/book_content.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../controllers/book_reader_controller.dart';
 
 /// Renders a [BookContent]'s paragraphs as a scrollable reading view.
 ///
@@ -32,12 +35,98 @@ class BookContentView extends StatelessWidget {
         final paragraph = content.paragraphs[index];
         return Padding(
           padding: const EdgeInsets.only(bottom: 20),
-          child: Text(
-            paragraph.text,
-            style: AppTextStyles.readingBody,
-          ),
+          child: _ParagraphText(paragraph: paragraph),
         );
       },
+    );
+  }
+}
+
+/// One paragraph's text, optionally rendering a highlighted word inside
+/// it — this is Module 5's entire visual footprint.
+///
+/// WHY THIS SUBSCRIBES TO `highlightRange` HERE, PER-PARAGRAPH, RATHER
+/// THAN `BookContentView` WATCHING IT ONCE AT THE TOP:
+/// `BookReaderController.highlightRange` changes roughly once per
+/// spoken word — many times a second during active playback. If
+/// `BookContentView` watched it directly, EVERY visible paragraph would
+/// rebuild on EVERY word, even the ones nowhere near what's currently
+/// being read — exactly the "unnecessary rebuilds" this module is
+/// required to avoid, and for a long novel with many paragraphs on
+/// screen at once, a real, avoidable performance cost.
+///
+/// `context.select` here instead gives each `_ParagraphText` its OWN,
+/// narrow subscription: "the highlighted range, but only if it actually
+/// falls inside THIS paragraph — otherwise `null`." A word being spoken
+/// three paragraphs away produces a `null` result for this paragraph
+/// both before and after the change, so `select` correctly sees no
+/// change and skips the rebuild entirely. Only the (at most two)
+/// paragraphs actually gaining or losing the highlight ever rebuild —
+/// this is also exactly why `highlightRange` is a single record: it
+/// gives `select` one structurally-comparable value to key off, instead
+/// of two fields that could drift out of sync with each other.
+class _ParagraphText extends StatelessWidget {
+  const _ParagraphText({required this.paragraph});
+
+  final BookParagraph paragraph;
+
+  @override
+  Widget build(BuildContext context) {
+    final ({int start, int end})? localRange =
+        context.select<BookReaderController, ({int start, int end})?>(
+      (controller) {
+        final range = controller.highlightRange;
+        if (range == null) return null;
+        // Clip the book-wide highlight range down to local offsets
+        // within THIS paragraph's own text — and return `null` (not a
+        // zero-length or out-of-bounds range) whenever it doesn't
+        // overlap this paragraph at all. Returning `null` in that case,
+        // rather than some sentinel range, is what lets `select` treat
+        // "highlight is elsewhere" as a stable, unchanging value across
+        // however many other paragraphs the highlight passes through.
+        final int overlapStart = range.start < paragraph.startOffset
+            ? paragraph.startOffset
+            : (range.start > paragraph.endOffset
+                ? paragraph.endOffset
+                : range.start);
+        final int overlapEnd = range.end > paragraph.endOffset
+            ? paragraph.endOffset
+            : (range.end < paragraph.startOffset
+                ? paragraph.startOffset
+                : range.end);
+        if (overlapEnd <= overlapStart) return null;
+        return (
+          start: overlapStart - paragraph.startOffset,
+          end: overlapEnd - paragraph.startOffset,
+        );
+      },
+    );
+
+    if (localRange == null) {
+      // The common case for the vast majority of paragraphs at any
+      // given moment: no highlight to render, so a plain `Text` is all
+      // that's needed — no `RichText`/`TextSpan` machinery for text that
+      // isn't being spoken right now.
+      return Text(paragraph.text, style: AppTextStyles.readingBody);
+    }
+
+    final TextStyle baseStyle = AppTextStyles.readingBody;
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          TextSpan(text: paragraph.text.substring(0, localRange.start)),
+          TextSpan(
+            text: paragraph.text.substring(localRange.start, localRange.end),
+            style: baseStyle.copyWith(
+              backgroundColor: AppColors.primaryLight,
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          TextSpan(text: paragraph.text.substring(localRange.end)),
+        ],
+      ),
     );
   }
 }
