@@ -81,18 +81,112 @@ class _ReaderView extends StatelessWidget {
             onPressed: () => BookInfoSheet.show(context, book),
           ),
         ],
+        bottom: const _ProgressIndicatorBar(),
       ),
       body: const Stack(
         children: [
           SafeArea(child: _ReaderContentSection()),
-          // Renders nothing visible — see its own doc comment. Placed in
-          // a Stack alongside the real content purely so it participates
-          // in the widget tree and can react to `ttsErrorMessage`.
+          // Neither of these renders anything visible — see their own
+          // doc comments. Placed in a Stack alongside the real content
+          // purely so they participate in the widget tree and can react
+          // to their respective piece of controller state.
           _TtsErrorListener(),
+          _ResumePromptListener(),
         ],
       ),
       bottomNavigationBar: const _ReaderPlaybackSection(),
     );
+  }
+}
+
+/// A slim progress bar in the AppBar showing how far through the book the
+/// user has read (`BookReaderController.progressFraction`).
+///
+/// WHY `context.select` HERE TOO (not a blanket watch on `_ReaderView`):
+/// `progressFraction` updates on every spoken word during playback — the
+/// same rebuild-storm risk `_PlaybackArea` and `_ParagraphText` already
+/// guard against elsewhere in this screen. Isolating it to its own tiny
+/// widget means only this 3-pixel-tall bar repaints on every word, not
+/// the AppBar's title or actions around it.
+class _ProgressIndicatorBar extends StatelessWidget
+    implements PreferredSizeWidget {
+  const _ProgressIndicatorBar();
+
+  @override
+  Size get preferredSize => const Size.fromHeight(3);
+
+  @override
+  Widget build(BuildContext context) {
+    final double fraction = context.select<BookReaderController, double>(
+      (controller) => controller.progressFraction,
+    );
+    return LinearProgressIndicator(
+      value: fraction,
+      minHeight: 3,
+      backgroundColor: AppColors.border,
+      color: AppColors.primary,
+    );
+  }
+}
+
+/// Shows a Resume-or-Start-Over dialog when
+/// `BookReaderController.pendingResumeOffset` is non-null, then resolves
+/// it via the controller's `resumeFromSaved`/`dismissResumePrompt` based
+/// on the user's choice — renders nothing visible itself.
+///
+/// Same "why this can't be inline in build()" reasoning as
+/// `_TtsErrorListener` above: showing a dialog is a side effect, and
+/// `context.select` means this widget (and therefore this
+/// `addPostFrameCallback`) only re-runs when `pendingResumeOffset`
+/// itself changes value — it can't fire a second time for the same
+/// still-unresolved prompt just because something else on screen
+/// rebuilt.
+class _ResumePromptListener extends StatelessWidget {
+  const _ResumePromptListener();
+
+  @override
+  Widget build(BuildContext context) {
+    final int? pendingResumeOffset =
+        context.select<BookReaderController, int?>(
+      (controller) => controller.pendingResumeOffset,
+    );
+
+    if (pendingResumeOffset != null) {
+      final controller = context.read<BookReaderController>();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        showDialog<void>(
+          context: context,
+          // Forces an explicit choice — dismissing by tapping outside
+          // the dialog would leave `pendingResumeOffset` non-null with
+          // no way for the user to make it go away, which is worse than
+          // requiring one deliberate tap.
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text(AppStrings.resumeDialogTitle),
+            content: const Text(AppStrings.resumeDialogMessage),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  controller.dismissResumePrompt();
+                },
+                child: const Text(AppStrings.startOverButtonLabel),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  controller.resumeFromSaved();
+                },
+                child: const Text(AppStrings.resumeButtonLabel),
+              ),
+            ],
+          ),
+        );
+      });
+    }
+
+    return const SizedBox.shrink();
   }
 }
 

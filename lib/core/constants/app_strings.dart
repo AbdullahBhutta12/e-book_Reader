@@ -99,4 +99,12 @@ class AppStrings {
   // that already happened, not an ongoing condition.
   static const String ttsPlaybackErrorMessage =
       'Something went wrong while reading this book aloud.';
+
+  // --- Reading progress & resume (Module 6) ------------------------------
+  static const String resumeDialogTitle = 'Resume reading?';
+  static const String resumeDialogMessage =
+      'You have unfinished progress in this book. Would you like to pick '
+      'up where you left off, or start over from the beginning?';
+  static const String resumeButtonLabel = 'Resume';
+  static const String startOverButtonLabel = 'Start Over';
 }

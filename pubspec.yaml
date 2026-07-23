@@ -43,8 +43,16 @@ dependencies:
   # Flutter TTS package with genuine start/pause/completion/error/cancel
   # callbacks across Android and iOS — exactly the event model Module 4's
   # playback state machine is built on, and the same callback family
-  # Module 5's word highlighting will extend.
+  # Module 5's word highlighting extends.
   flutter_tts: ^4.2.5
+
+  # shared_preferences: persists reading progress (which book, how far
+  # into it) across app restarts. Published by the Flutter team itself
+  # (flutter.dev, verified publisher), 10.5k+ likes. Using the modern
+  # `SharedPreferencesAsync` API specifically — the package's own docs
+  # now flag the older `SharedPreferences.getInstance()` singleton API as
+  # legacy and slated for future deprecation, in favor of this one.
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

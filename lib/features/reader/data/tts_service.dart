@@ -149,6 +149,41 @@ class TtsService {
       await _tts.setSpeechRate(0.5);
       await _tts.setPitch(1.0);
 
+      // RESUME-PLAYBACK BUG FIX (real-device only — see the trace notes
+      // on `BookReaderController.resumeFromSaved`/`_speakCurrentChunk`
+      // for how this was isolated):
+      //
+      // Everything on the Dart side of a resumed session is provably
+      // correct — `resumeFromSaved()` computes the right
+      // `_currentChunkIndex`, nothing between there and
+      // `_speakCurrentChunk()` ever touches it again, and
+      // `_speakCurrentChunk()` does hand this exact engine the resumed
+      // chunk's own text, not chunk 0's. Yet on a real device, the very
+      // FIRST `speak()` call of a freshly-restarted app session was
+      // observed to play from the beginning regardless.
+      //
+      // WHY: Android's `TextToSpeech` engine lives in its OWN
+      // system-bound service process, separate from this app's process.
+      // When the app is killed outright (swiped away, not gracefully
+      // closed), there is no `dispose()`/`shutdown()` call to tell that
+      // service its previous client is gone — so a still-queued or
+      // still-"paused" utterance from the PREVIOUS session can survive
+      // in the engine's own internal state. This app's `setQueueMode(0)`
+      // (QUEUE_FLUSH) only takes effect ON a `speak()` call — it flushes
+      // whatever was pending, then queues the new request — so it
+      // protects every `speak()` call AFTER the first, but does nothing
+      // for leftover state that predates this session's first call at
+      // all.
+      //
+      // Explicitly stopping the engine here, once, right after
+      // configuring it and before this service is ever asked to
+      // `speak()` anything, guarantees every session — resumed or
+      // not — starts from a genuinely clean engine with no inherited
+      // queue/utterance state. Ignoring the return value is deliberate:
+      // there may be nothing to stop (a fully clean launch), and that is
+      // not an error.
+      await _tts.stop();
+
       return const TtsInitSuccess();
     } on PlatformException catch (e) {
       return TtsInitFailure(e.message ?? e.code);
@@ -202,17 +237,18 @@ class TtsService {
   /// exception-safe" is enforced; that guarantee now lives in ONE place
   /// instead of needing to be remembered separately in three methods.
   ///
-  /// TEMPORARY DIAGNOSTIC PATCH — DO NOT LEAVE THIS IN PRODUCTION:
-  /// This method previously caught every exception with `catch (_)`,
-  /// which silently discarded whatever the real platform exception was —
-  /// exactly what made the large-`.txt`-file "Error from TextToSpeech
-  /// (speak)" bug impossible to diagnose from the SnackBar message alone.
-  /// The `catch (error, stackTrace)` clause below now captures both and
-  /// writes them to `dart:developer`'s log before still returning
-  /// `false` — the return behavior and the public API are UNCHANGED;
-  /// this only adds visibility into what was already happening. Once the
-  /// real cause is identified, this logging call should be removed (or
-  /// gated behind a debug-only flag) — it is not meant to ship.
+  /// WHY THE CAUGHT EXCEPTION IS LOGGED (not just swallowed into
+  /// `false`): this started as a temporary diagnostic patch to track
+  /// down the large-`.txt`-file "Error from TextToSpeech (speak)" bug —
+  /// that specific bug is now fixed at its root (Module 4.2's chunked
+  /// playback keeps every `speak()` call under the engine's input
+  /// ceiling). The logging stayed on purpose rather than being reverted:
+  /// silently discarding an unexpected platform exception into a bare
+  /// `false` is exactly what made that original bug invisible from the
+  /// SnackBar message alone, and that risk didn't go away just because
+  /// this particular cause did. `dart:developer.log` only writes to the
+  /// Flutter/DevTools log stream — it has no effect on the return value
+  /// or any user-visible behavior, so keeping it costs nothing.
   Future<bool> _runAndCheckSuccess(Future<dynamic> Function() action) async {
     try {
       final dynamic result = await action();

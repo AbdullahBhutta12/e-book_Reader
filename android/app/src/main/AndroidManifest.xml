@@ -41,5 +41,13 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Required so the app can detect installed text-to-speech
+             engines on Android 11+ (package-visibility restrictions) —
+             see flutter_tts's own Android setup docs and
+             ANDROID_SETUP_MODULE4.md. This was specified back in Module 4
+             but never actually landed in this file until this review. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
     </queries>
 </manifest>

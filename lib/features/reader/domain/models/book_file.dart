@@ -50,6 +50,35 @@ class BookFile {
   /// Raw file size in bytes, exactly as reported by the OS.
   final int sizeInBytes;
 
+  /// A stable identifier for "this book," usable as a persistence key —
+  /// unlike [path], which is NOT safe to use for that purpose.
+  ///
+  /// ROOT-CAUSE NOTE (Module 6 resume-progress bug): [path] comes from
+  /// whatever `file_picker` happened to hand back for a given pick — and
+  /// on Android, `file_picker` copies the picked document into this
+  /// app's cache directory under a freshly-generated subdirectory EVERY
+  /// time `pickBook()` runs, even when the user picks the exact same
+  /// underlying file twice in a row. Since this app has no persisted
+  /// library (re-opening a book always means picking it again from
+  /// `HomeScreen`), `path` is effectively a new, unpredictable value
+  /// every single session — never a stable one.
+  ///
+  /// `ReadingProgressStore` originally used `path` as its lookup key on
+  /// the (reasonable-sounding, but false) assumption that "the physical
+  /// file path is already this app's authoritative identity for a
+  /// book." That assumption is what silently broke resume: progress was
+  /// always saved correctly under one session's path and then looked up
+  /// under a different, never-matching path the next session, so
+  /// `load()` always returned `null` — indistinguishable, from the
+  /// store's point of view, from "no progress was ever saved."
+  ///
+  /// `name` + `sizeInBytes` are exactly what DOES survive across
+  /// separate picks of the same source file (the OS reports the same
+  /// display name and byte size for it every time), so combining them
+  /// gives a key that's stable across app restarts without requiring a
+  /// real content hash or a persisted library.
+  String get identityKey => '$name::$sizeInBytes';
+
   /// Human-friendly size, e.g. "2.43 MB".
   ///
   /// WHY THIS IS A GETTER, NOT A STORED FIELD:

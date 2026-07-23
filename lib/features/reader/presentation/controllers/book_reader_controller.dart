@@ -1,20 +1,24 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding, WidgetsBindingObserver, AppLifecycleState;
 import '../../../../core/constants/app_strings.dart';
+import '../../data/reading_progress_store.dart';
 import '../../data/text_extractor_factory.dart';
 import '../../data/tts_service.dart';
 import '../../domain/models/book_content_result.dart';
 import '../../domain/models/book_file.dart';
 import '../../domain/models/playback_chunk.dart';
+import '../../domain/models/reading_progress.dart';
 import '../../domain/models/tts_init_result.dart';
 import '../../domain/models/tts_playback_state.dart';
 import '../../domain/services/playback_chunker.dart';
 
 /// Owns the Reader screen's state: whether the book is loaded, whether
-/// text-to-speech is ready, and (as of this patch) exactly which chunk of
-/// the book is currently playing. Module 5 will extend this same class
-/// with the currently-highlighted sentence/word, rather than introducing
-/// a second, separate controller — exactly as planned in the
-/// architecture review.
+/// text-to-speech is ready, exactly which chunk of the book is currently
+/// playing, the currently-highlighted word (Module 5), and — as of
+/// Module 6 — how far into the book the user has read, persisted across
+/// app sessions.
 ///
 /// WHY `ChangeNotifier` (imported from `flutter/foundation.dart`, NOT
 /// `flutter/material.dart`):
@@ -25,47 +29,47 @@ import '../../domain/services/playback_chunker.dart';
 /// keeps this controller honest about what it actually depends on: this
 /// class holds STATE, not UI.
 ///
+/// MODULE 6 NOTE ON THE ONE NEW IMPORT (`flutter/widgets.dart`, narrowed
+/// to exactly `WidgetsBinding`/`WidgetsBindingObserver`/
+/// `AppLifecycleState`): detecting "the app was backgrounded" (one of
+/// this module's required save triggers) has no `foundation`-level
+/// equivalent — `WidgetsBindingObserver` is Flutter's standard,
+/// lowest-level mechanism for it, and is a lifecycle-observation
+/// interface, not a widget. This is still far short of pulling in
+/// `material.dart` — the principle above ("this class holds state, not
+/// UI") is about not depending on Material widgets, which this doesn't.
+///
 /// WHY THIS IS SCOPED TO THE READER SCREEN (created when it opens,
 /// destroyed when it closes) INSTEAD OF LIVING AT THE TRUE APP ROOT:
 /// "Which book is open and how far did the TTS engine get reading it" is
 /// only meaningful while a book is actually open. `provider`'s job here
 /// is to share this state across the WIDGETS WITHIN the Reader screen —
-/// the content view, and the playback control bar — not to make it
-/// global.
+/// not to make it global.
 ///
 /// ARCHITECTURE NOTE — this class is the middle layer of:
 ///   Presentation (ReaderScreen / PlaybackControlBar)
-///         ↓ calls play() / pause() / stop()
+///         ↓ calls play() / pause() / stop() / resumeFromSaved() / etc.
 ///   BookReaderController        ← YOU ARE HERE
-///         ↓ calls speak() / pause() / stop(), receives callbacks
-///   TtsService
-///         ↓ calls flutter_tts's platform channel
-///   flutter_tts
-/// Presentation never touches `TtsService` or `flutter_tts` directly —
-/// it only ever calls methods on this controller and reads its exposed
-/// state getters. `PlaybackChunker` is a third, sibling collaborator at
-/// this same layer — a pure domain helper this controller calls, not
-/// something `TtsService` or the presentation layer ever needs to know
-/// about.
-///
-/// CHUNKED PLAYBACK — why this exists at all: real-device testing found
-/// that sending an entire book (over 1,000,000 characters for a large
-/// `.txt` file) to `TtsService.speak()` in one call fails outright —
-/// Android's native TTS engine rejects any single request beyond a fixed
-/// character ceiling. This controller now speaks the book one
-/// [PlaybackChunk] at a time, automatically continuing to the next chunk
-/// when the current one finishes, which from the user's perspective
-/// sounds and behaves exactly like one continuous reading.
-class BookReaderController extends ChangeNotifier {
+///         ↓ calls TtsService (speak/pause/stop, callbacks) and
+///           ReadingProgressStore (save/load/clear)
+///   TtsService                          ReadingProgressStore
+///         ↓                                   ↓
+///   flutter_tts                        shared_preferences
+/// Presentation never touches `TtsService`, `ReadingProgressStore`, or
+/// any third-party package directly — it only ever calls methods on this
+/// controller and reads its exposed state getters.
+class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
   BookReaderController({
     required BookFile book,
     TextExtractorFactory? extractorFactory,
     TtsService? ttsService,
     PlaybackChunker? chunker,
+    ReadingProgressStore? progressStore,
   })  : _book = book,
         _extractorFactory = extractorFactory ?? const TextExtractorFactory(),
         _ttsService = ttsService ?? TtsService(),
-        _chunker = chunker ?? const PlaybackChunker() {
+        _chunker = chunker ?? const PlaybackChunker(),
+        _progressStore = progressStore ?? ReadingProgressStore() {
     // Must be called from the constructor BODY, not the initializer list
     // above — see the doc comment on `TtsService.attachHandlers` for why.
     _ttsService.attachHandlers(
@@ -77,6 +81,11 @@ class BookReaderController extends ChangeNotifier {
       onError: _handleTtsError,
       onProgress: _handleProgress,
     );
+    // Registers this controller to hear `AppLifecycleState` changes (see
+    // `didChangeAppLifecycleState` below) — the "backgrounding" save
+    // trigger Module 6 requires. Paired with `removeObserver` in
+    // `dispose()`.
+    WidgetsBinding.instance.addObserver(this);
     _loadContent();
     _initializeTts();
   }
@@ -99,10 +108,13 @@ class BookReaderController extends ChangeNotifier {
   /// logic without needing a real 1MB file.
   final PlaybackChunker _chunker;
 
+  /// Same DI pattern a fourth time — a test can supply a fake
+  /// `ReadingProgressStore` without touching real device storage.
+  final ReadingProgressStore _progressStore;
+
   /// Guards every state mutation below against firing after this
   /// controller has been disposed. `dispose()` is synchronous, but this
-  /// controller kicks off several independent async operations
-  /// (`_loadContent`, `_initializeTts`, and every TTS callback) that can
+  /// controller kicks off several independent async operations that can
   /// still be pending — or fire — after the Reader screen has already
   /// been popped and this controller torn down. Without this guard,
   /// `notifyListeners()` firing after `dispose()` throws a
@@ -132,16 +144,20 @@ class BookReaderController extends ChangeNotifier {
   /// else. This matters for correctness, not just performance: if this
   /// were recomputed on every Play press, `_currentChunkIndex` (an index
   /// INTO this list) could silently end up pointing at a different piece
-  /// of text than the one the user was actually mid-sentence through,
-  /// especially once Module 5 starts tracking a highlighted position
-  /// relative to a specific chunk.
+  /// of text than the one the user was actually mid-sentence through.
   List<PlaybackChunk> _chunks = const [];
 
   /// Which chunk `play()` will speak next (or resume, mid-chunk, after a
-  /// pause). Reset to `0` by `stop()`, by a fresh `_loadContent()`, and
-  /// by a mid-playback error — in every one of those cases, the next
-  /// Play press should start again from the beginning of the book.
+  /// pause). Reset to `0` by `stop()`, by a fresh `_loadContent()`, by a
+  /// mid-playback error, and set to a specific chunk by
+  /// `resumeFromSaved()` — in the first three cases, the next Play press
+  /// should start again from the beginning of the book; in the fourth,
+  /// from wherever the user chose to resume.
   int _currentChunkIndex = 0;
+
+  /// Total characters in this book's extracted text — the denominator
+  /// for `progressFraction`. `0` until content finishes loading.
+  int _totalCharacters = 0;
 
   // --- Highlighting (Module 5) -----------------------------------------
 
@@ -203,6 +219,107 @@ class BookReaderController extends ChangeNotifier {
   /// currently in flight (e.g. paused before speech audibly started).
   int? _lastChunkLocalOffset;
 
+  /// Set by `resumeFromSaved`, consumed by the very next
+  /// `_speakCurrentChunk` call: how far INTO `_chunks[_currentChunkIndex]`'s
+  /// OWN text the saved offset actually landed.
+  ///
+  /// ROOT CAUSE THIS FIXES — "chunk-level resume" was never actually
+  /// applied within the chunk at all: `resumeFromSaved` correctly picked
+  /// out the right CHUNK (`_currentChunkIndex` was always correct — this
+  /// was verified by direct tracing/logging), but the next `play()` ->
+  /// `_speakCurrentChunk()` always spoke `_chunks[_currentChunkIndex]`'s
+  /// text FROM ITS OWN START, exactly like a brand-new chunk, because
+  /// nothing recorded WHERE inside that chunk the saved offset actually
+  /// was. For a book big enough to have many small chunks, that's a
+  /// bounded (if imprecise) few-thousand-character rewind — easy to
+  /// mistake for "basically working." For a SHORT book (or the specific
+  /// file used in on-device testing here) that fits in a single chunk,
+  /// "the start of the containing chunk" and "the very start of the
+  /// book" are the EXACT SAME position — so playback and highlighting
+  /// visibly restarted from page one every time, while the on-screen
+  /// scroll (computed independently, as a plain fraction of the whole
+  /// book — see `pendingScrollFraction`) correctly jumped ahead, making
+  /// it look like only the TTS side was broken.
+  ///
+  /// THE FIX: this field carries the missing "how far into the chunk"
+  /// number forward from `resumeFromSaved` to the next `play()` call,
+  /// which slices the chunk's text before ever handing it to
+  /// `TtsService.speak()` — the exact same "start `speak()` partway
+  /// through a chunk's text, then re-base `_handleProgress`'s offsets by
+  /// this same amount" technique `_chunkProgressBase`/
+  /// `_lastChunkLocalOffset` already use for an ordinary in-session
+  /// pause/resume, above. This is genuinely the SAME kind of resume —
+  /// "continue this chunk from partway through," not "start this chunk
+  /// over" — just triggered by a saved cross-session offset instead of a
+  /// live pause.
+  ///
+  /// `null` whenever there's nothing pending — i.e. every `play()` call
+  /// that ISN'T the very next one after `resumeFromSaved` — so an
+  /// ordinary fresh start or auto-advance is never affected by this.
+  int? _pendingResumeLocalOffset;
+
+  // --- Reading progress & resume (Module 6) -----------------------------
+
+  /// A GLOBAL offset the user was last known to be reading at — unlike
+  /// [_highlightRange], this is NEVER cleared by `stop()`. It exists
+  /// specifically so [progressFraction] (and progress saving) has a
+  /// stable, durable answer to "how far into the book is the user?" even
+  /// after playback stops, whereas [_highlightRange] is specifically
+  /// about "what word should be visually highlighted RIGHT NOW" — two
+  /// genuinely different questions that happened to share one field
+  /// before this module needed to tell them apart.
+  int _lastKnownOffset = 0;
+
+  /// Non-null exactly when a previous session's saved progress exists
+  /// for this book AND hasn't been resolved yet (by [resumeFromSaved] or
+  /// [dismissResumePrompt]) in this session. The Reader screen shows a
+  /// resume-or-start-over prompt for as long as this is non-null.
+  int? _pendingResumeOffset;
+  int? get pendingResumeOffset => _pendingResumeOffset;
+
+  /// Set exactly once, by [resumeFromSaved], to the fraction (`0.0`–`1.0`)
+  /// through the book the user's saved position was at — the ONLY signal
+  /// `BookContentView` (the on-screen scrollable text) has that it should
+  /// jump forward past the very beginning instead of opening at its
+  /// default scroll position.
+  ///
+  /// WHY THIS IS THE ROOT CAUSE OF "the book still opens from the
+  /// beginning" EVEN AFTER TAPPING RESUME: [resumeFromSaved] already
+  /// correctly restores [_currentChunkIndex] (so a subsequent Play press
+  /// correctly starts speaking — and highlighting — from the resumed
+  /// chunk, not chunk `0`). But nothing previously told the READING VIEW
+  /// itself to scroll anywhere — `BookContentView` had no concept of a
+  /// resume position at all, so its `ListView` always rendered at its
+  /// default (top) scroll offset regardless of `_currentChunkIndex`. From
+  /// the user's perspective — looking at the screen, not necessarily
+  /// listening yet — that reads as "resume did nothing."
+  ///
+  /// WHY A FRACTION, NOT A PIXEL OFFSET: this controller has no idea how
+  /// tall any given paragraph renders on screen (font size, screen width,
+  /// and accessibility text scaling all affect that, and none of them are
+  /// this class's concern). A proportional fraction through the book's
+  /// total character count is the same "good enough, chunk/paragraph-
+  /// level precision, not exact-pixel precision" tradeoff this module
+  /// already makes for chunk-level (not word-level) resume — see
+  /// `_chunkIndexForOffset`'s own doc comment for that same reasoning.
+  /// `BookContentView` turns this fraction into a concrete scroll offset
+  /// once its `ListView` has actually laid out and knows its real
+  /// `maxScrollExtent`.
+  ///
+  /// `null` before a resume happens, and again immediately after
+  /// `BookContentView` has consumed it (see [consumePendingScroll]) — so
+  /// it can never fire a second time and re-snap the view away from
+  /// wherever the user has since scrolled to.
+  double? _pendingScrollFraction;
+  double? get pendingScrollFraction => _pendingScrollFraction;
+
+  /// How far through the book [_lastKnownOffset] currently is, as a
+  /// `0.0`–`1.0` fraction — the basis for the Reader screen's progress
+  /// indicator. `0` before content has finished loading (division by a
+  /// still-zero [_totalCharacters] would otherwise be undefined).
+  double get progressFraction =>
+      _totalCharacters == 0 ? 0 : _lastKnownOffset / _totalCharacters;
+
   // --- Text-to-speech state -------------------------------------------
 
   TtsPlaybackState _playbackState = TtsPlaybackState.stopped;
@@ -255,6 +372,20 @@ class BookReaderController extends ChangeNotifier {
       // lifetime (rather than recomputing it in `play()`) matters for
       // correctness, not just performance.
       _chunks = _chunker.chunk(content);
+      _totalCharacters = content.fullText.length;
+
+      // MODULE 6: check for saved progress from a previous session, now
+      // that we know how long this book actually is (needed to sanity-
+      // check the saved offset below).
+      final ReadingProgress? saved =
+          await _progressStore.load(_book.identityKey);
+      if (saved != null &&
+          saved.characterOffset > 0 &&
+          saved.characterOffset < _totalCharacters) {
+        _pendingResumeOffset = saved.characterOffset;
+        _lastKnownOffset = saved.characterOffset;
+      }
+
       _finishContentWith(BookContentLoaded(content));
     } catch (_) {
       // We deliberately don't surface the raw exception message to the
@@ -293,8 +424,8 @@ class BookReaderController extends ChangeNotifier {
   }
 
   /// Starts reading the book aloud from the beginning, or resumes it if
-  /// currently paused, or continues from wherever auto-advance last left
-  /// off — all three cases are covered by the SAME line
+  /// currently paused, or continues from wherever auto-advance (or a
+  /// resumed session) last left off — all covered by the SAME line
   /// (`_speakCurrentChunk`), because `_currentChunkIndex` already points
   /// at the right place in every one of them.
   Future<void> play() async {
@@ -325,18 +456,27 @@ class BookReaderController extends ChangeNotifier {
     // that as the new base is what keeps the highlight continuous
     // instead of snapping back to the chunk's start.
     //
-    // ANYTHING ELSE (fresh chunk, whether the very first Play or an
-    // auto-advance): the upcoming `speak()` call gets the chunk's full,
-    // untouched text, so its progress offsets are already relative to
-    // the chunk's own start — base `0`, nothing to carry over.
+    // ANYTHING ELSE (fresh chunk — the very first Play, an auto-advance,
+    // or a chunk selected by `resumeFromSaved`): the upcoming `speak()`
+    // call gets the chunk's full, untouched text, so its progress
+    // offsets are already relative to the chunk's own start — base `0`,
+    // nothing to carry over.
+    //
+    // UNLESS `resumeFromSaved` left a pending within-chunk offset (see
+    // `_pendingResumeLocalOffset`'s doc comment) — consumed here, exactly
+    // once, by capturing it into a local BEFORE clearing the field, so a
+    // later auto-advance into the NEXT chunk is never affected by it.
+    final int resumeLocalOffset = _pendingResumeLocalOffset ?? 0;
+    _pendingResumeLocalOffset = null;
+
     if (_playbackState == TtsPlaybackState.paused) {
       _chunkProgressBase = _lastChunkLocalOffset ?? 0;
     } else {
-      _chunkProgressBase = 0;
+      _chunkProgressBase = resumeLocalOffset;
       _lastChunkLocalOffset = null;
     }
 
-    await _speakCurrentChunk();
+    await _speakCurrentChunk(seekOffset: resumeLocalOffset);
   }
 
   Future<void> pause() async {
@@ -347,10 +487,23 @@ class BookReaderController extends ChangeNotifier {
     // each chunk is still just one ordinary `speak()` call from its
     // point of view.
     await _ttsService.pause();
+    // MODULE 6: pause is one of the three required save triggers
+    // (pause/stop/backgrounding). Fire-and-forget is deliberate here —
+    // the user doesn't need to wait on a disk write to see the Pause
+    // button respond.
+    _saveProgress();
   }
 
   Future<void> stop() async {
     if (_playbackState == TtsPlaybackState.stopped) return;
+
+    // MODULE 6: capture and save progress BEFORE resetting any state
+    // below — `_lastKnownOffset` reflects "where the user was" right up
+    // until this point; saving it here (rather than after `_stop`
+    // resets things) is what lets a Stop mid-book still offer a resume
+    // prompt next time this book is opened, matching this module's own
+    // "persist on stop" requirement.
+    _saveProgress();
 
     // Set state and reset the chunk index SYNCHRONOUSLY, before awaiting
     // the native stop call below. This closes a real race: if a chunk
@@ -381,15 +534,110 @@ class BookReaderController extends ChangeNotifier {
     _notify();
   }
 
-  /// Speaks whatever chunk `_currentChunkIndex` currently points at.
-  /// Used by [play] (fresh start / resume) and by [_handleChunkCompletion]
-  /// (auto-advance) — both cases are "speak the chunk the index already
-  /// points at," so there's exactly one method that does that.
-  Future<void> _speakCurrentChunk() async {
+  /// Called by the UI when the user chooses "Resume" on the resume
+  /// prompt. Points playback at whichever chunk currently contains the
+  /// saved offset — see `_chunkIndexForOffset` for why a chunk-level
+  /// resume, not a mid-chunk one, is the right precision to promise
+  /// across app restarts. Also records [pendingScrollFraction] so the
+  /// on-screen reading view can jump forward to roughly that position
+  /// too, instead of silently staying at the top of the book — see that
+  /// field's own doc comment for why this was the missing piece.
+  void resumeFromSaved() {
+    final int? offset = _pendingResumeOffset;
+    if (offset == null) return;
+    _currentChunkIndex = _chunkIndexForOffset(offset);
+    // THE ACTUAL FIX: how far PAST this chunk's own start the saved
+    // offset was — see `_pendingResumeLocalOffset`'s doc comment for why
+    // this (not just picking the right chunk) is what was missing.
+    // Clamped defensively: `chunk.startOffset` and `offset` are already
+    // guaranteed consistent by `_chunkIndexForOffset`, but a slice index
+    // must never be allowed to exceed the chunk text's own length.
+    final PlaybackChunk resumedChunk = _chunks[_currentChunkIndex];
+    _pendingResumeLocalOffset = (offset - resumedChunk.startOffset).clamp(
+      0,
+      resumedChunk.text.length,
+    );
+    // TEMPORARY DEBUG LOG — remove once resume playback is confirmed
+    // fixed on-device. Checkpoint 1 of 3 (see `_speakCurrentChunk` for
+    // checkpoint 2, `_handleProgress` for checkpoint 3).
+    developer.log(
+      'CHECKPOINT 1 resumeFromSaved(): offset=$offset '
+      '_currentChunkIndex=$_currentChunkIndex '
+      '_pendingResumeLocalOffset=$_pendingResumeLocalOffset '
+      '_chunkProgressBase=$_chunkProgressBase '
+      '_lastChunkLocalOffset=$_lastChunkLocalOffset '
+      'highlightRange=$_highlightRange',
+      name: 'ResumeDebug',
+    );
+    _pendingScrollFraction =
+        _totalCharacters == 0 ? null : offset / _totalCharacters;
+    _pendingResumeOffset = null;
+    _notify();
+  }
+
+  /// Called by `BookContentView` immediately after it has scrolled to
+  /// [pendingScrollFraction] once — the same "consume a one-off signal,
+  /// then clear it" pattern `clearTtsError` uses above, so this can never
+  /// fire a second time and yank the view back to the resume point after
+  /// the user has since scrolled elsewhere themselves.
+  void consumePendingScroll() {
+    if (_pendingScrollFraction == null) return; // avoid a no-op rebuild
+    _pendingScrollFraction = null;
+    _notify();
+  }
+
+  /// Called by the UI when the user chooses "Start Over" on the resume
+  /// prompt. Leaves `_currentChunkIndex` at its default (`0`) and clears
+  /// the previously-saved progress from storage — without this, closing
+  /// and reopening this same book again soon after would show the exact
+  /// same stale resume prompt the user just dismissed.
+  void dismissResumePrompt() {
+    if (_pendingResumeOffset == null) return;
+    _pendingResumeOffset = null;
+    _progressStore.clear(_book.identityKey); // fire-and-forget
+    _notify();
+  }
+
+  /// Speaks whatever chunk `_currentChunkIndex` currently points at —
+  /// from that chunk's own start, unless [seekOffset] says otherwise.
+  /// Used by [play] (fresh start / cross-session resume) and by
+  /// [_handleChunkCompletion] (auto-advance, always `seekOffset: 0`) —
+  /// every case is "speak the chunk the index already points at, from
+  /// some point within it," so there's exactly one method that does
+  /// that.
+  ///
+  /// WHY [seekOffset] EXISTS — see `_pendingResumeLocalOffset`'s doc
+  /// comment for the full root-cause story: picking the right CHUNK was
+  /// never the missing piece; picking the right point WITHIN it was.
+  /// Without this, every resume — no matter how correctly
+  /// `_currentChunkIndex` was restored — spoke that chunk's text from
+  /// its own beginning, which is indistinguishable from "the beginning
+  /// of the book" whenever that chunk happens to BE most or all of the
+  /// book (a short book, or simply the first chunk).
+  Future<void> _speakCurrentChunk({int seekOffset = 0}) async {
     if (_currentChunkIndex >= _chunks.length) return; // defensive
 
-    final bool started =
-        await _ttsService.speak(_chunks[_currentChunkIndex].text);
+    final PlaybackChunk chunk = _chunks[_currentChunkIndex];
+    final String textToSpeak =
+        (seekOffset > 0 && seekOffset < chunk.text.length)
+        ? chunk.text.substring(seekOffset)
+        : chunk.text;
+
+    // TEMPORARY DEBUG LOG — remove once resume playback is confirmed
+    // fixed on-device. Checkpoint 2 of 3 (see `resumeFromSaved` for
+    // checkpoint 1, `_handleProgress` for checkpoint 3).
+    developer.log(
+      'CHECKPOINT 2 _speakCurrentChunk(): _currentChunkIndex='
+      '$_currentChunkIndex chunk.startOffset=${chunk.startOffset} '
+      'seekOffset=$seekOffset _chunkProgressBase=$_chunkProgressBase '
+      '_lastChunkLocalOffset=$_lastChunkLocalOffset '
+      'highlightRange=$_highlightRange '
+      'textToSpeak.length=${textToSpeak.length} (chunk.text.length='
+      '${chunk.text.length})',
+      name: 'ResumeDebug',
+    );
+
+    final bool started = await _ttsService.speak(textToSpeak);
 
     // If the platform rejected the request outright, there's no
     // `onStart`/`onError` callback coming to tell us that — we have to
@@ -400,9 +648,10 @@ class BookReaderController extends ChangeNotifier {
   }
 
   /// Fires when one chunk finishes speaking naturally. Either advances
-  /// to the next chunk and keeps going (auto-advance — the whole point
-  /// of this patch), or, if that was the last chunk, resets to the
-  /// beginning and stops.
+  /// to the next chunk and keeps going (auto-advance), or, if that was
+  /// the last chunk, resets to the beginning, stops, and clears any
+  /// saved progress — the book is genuinely finished, so there's nothing
+  /// left to resume.
   void _handleChunkCompletion() {
     // If `stop()` already reset state to `.stopped` (see its own comment
     // for the race this guards against), this callback must NOT
@@ -431,6 +680,8 @@ class BookReaderController extends ChangeNotifier {
       _highlightRange = null;
       _chunkProgressBase = 0;
       _lastChunkLocalOffset = null;
+      _lastKnownOffset = 0;
+      _progressStore.clear(_book.identityKey); // fire-and-forget
       _setPlaybackState(TtsPlaybackState.stopped);
     }
   }
@@ -452,7 +703,8 @@ class BookReaderController extends ChangeNotifier {
   /// Translates one word-boundary event — reported by `TtsService` in
   /// offsets LOCAL to whichever chunk is currently speaking — into a
   /// book-wide `[start, end)` range, and republishes it as
-  /// `highlightRange`.
+  /// `highlightRange` (and, for Module 6's purposes, as the new
+  /// `_lastKnownOffset`).
   ///
   /// WHY `_currentChunkIndex` IS THE RIGHT CHUNK TO ADD ITS
   /// `startOffset` TO: this callback only ever fires while `TtsService`
@@ -496,7 +748,103 @@ class BookReaderController extends ChangeNotifier {
     final int globalEnd = chunk.startOffset + chunkLocalEnd;
 
     _highlightRange = (start: globalStart, end: globalEnd);
+    // MODULE 6: this is also exactly "how far the user has read" —
+    // updated on every word so `progressFraction` stays live during
+    // playback, but (unlike `_highlightRange`) never cleared by `stop()`,
+    // so the progress indicator still reflects real progress afterward.
+    _lastKnownOffset = globalStart;
+
+    // TEMPORARY DEBUG LOG — remove once resume playback is confirmed
+    // fixed on-device. Checkpoint 3 of 3 (see `resumeFromSaved` for
+    // checkpoint 1, `_speakCurrentChunk` for checkpoint 2). Logged only
+    // for the FIRST word of whatever's currently speaking (chunkLocalStart
+    // close to `_chunkProgressBase`) so a full chunk's worth of words
+    // doesn't flood the log — this is the one moment that actually
+    // proves (or disproves) that playback picked up from the resumed
+    // position: `highlightRange` here should land near the ORIGINAL
+    // saved offset, not near `chunk.startOffset` alone.
+    if (chunkLocalStart - _chunkProgressBase <= localEnd - localStart) {
+      developer.log(
+        'CHECKPOINT 3 _handleProgress() first word: word="$word" '
+        '_currentChunkIndex=$_currentChunkIndex '
+        'chunk.startOffset=${chunk.startOffset} '
+        '_chunkProgressBase=$_chunkProgressBase '
+        '_lastChunkLocalOffset=$_lastChunkLocalOffset '
+        'highlightRange=$_highlightRange',
+        name: 'ResumeDebug',
+      );
+    }
+
     _notify();
+  }
+
+  /// Finds the index (into `_chunks`) of the chunk that contains a given
+  /// global character offset — the chunk-level equivalent of
+  /// `BookContent.paragraphIndexAt`, and built the same way (binary
+  /// search over a list already sorted by ascending offset) for the same
+  /// reason: this runs against a list that could hold thousands of
+  /// chunks for a large book.
+  ///
+  /// WHY THIS ALONE ISN'T ENOUGH — AND ISN'T MEANT TO BE:
+  /// this only picks the right CHUNK; it says nothing about WHERE inside
+  /// that chunk the saved offset actually was. `resumeFromSaved` (the
+  /// only caller) pairs this with `_pendingResumeLocalOffset` for
+  /// exactly that reason — see that field's doc comment for the bug
+  /// that existed before that pairing was added (every resume speaking
+  /// its containing chunk from that chunk's own start, which is
+  /// indistinguishable from "the start of the book" whenever that
+  /// chunk IS most or all of the book).
+  int _chunkIndexForOffset(int offset) {
+    int low = 0;
+    int high = _chunks.length - 1;
+
+    while (low <= high) {
+      final int mid = (low + high) ~/ 2;
+      final PlaybackChunk chunk = _chunks[mid];
+
+      if (offset < chunk.startOffset) {
+        high = mid - 1;
+      } else if (offset >= chunk.endOffset) {
+        low = mid + 1;
+      } else {
+        return mid;
+      }
+    }
+
+    return low.clamp(0, _chunks.length - 1);
+  }
+
+  /// Writes the current [_lastKnownOffset] to storage. Fire-and-forget
+  /// wherever it's called from (`pause()`, `stop()`,
+  /// `didChangeAppLifecycleState`) — none of those callers need to await
+  /// a disk write to do their own job.
+  void _saveProgress() {
+    if (_lastKnownOffset <= 0) return; // nothing meaningful to save yet
+    _progressStore.save(
+      ReadingProgress(
+        bookPath: _book.identityKey,
+        characterOffset: _lastKnownOffset,
+        lastReadAt: DateTime.now(),
+      ),
+    );
+  }
+
+  /// MODULE 6 — the "backgrounding" save trigger. `AppLifecycleState`
+  /// transitions to `paused` when the app is no longer visible to the
+  /// user at all (home button, app switcher, screen lock) — the point at
+  /// which the process could be killed by the OS at any time without
+  /// further warning, making it the right moment to persist progress
+  /// defensively. `inactive` (a brief transitional state, e.g. a system
+  /// dialog or notification shade transiently covering the app) is
+  /// included too, since it's cheap to save slightly more often than
+  /// strictly necessary, and this errs toward never losing progress over
+  /// optimizing away a rare, inexpensive extra write.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _saveProgress();
+    }
   }
 
   /// Every playback-state transition funnels through here so the
@@ -523,10 +871,13 @@ class BookReaderController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     // Fire-and-forget: dispose() is synchronous and can't be awaited, but
     // we still want the native engine told to stop rather than left
-    // reading a book whose screen just closed.
+    // reading a book whose screen just closed, and this session's last
+    // known position saved rather than silently dropped.
     _ttsService.stop();
+    _saveProgress();
     super.dispose();
   }
 }

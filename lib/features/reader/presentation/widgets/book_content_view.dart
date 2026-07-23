@@ -21,18 +21,80 @@ import '../controllers/book_reader_controller.dart';
 /// object (that part's cheap — even a huge novel is only a few
 /// megabytes of text) — it's specifically the WIDGET TREE that stays
 /// small, which is what actually matters for scroll performance.
-class BookContentView extends StatelessWidget {
+class BookContentView extends StatefulWidget {
   const BookContentView({super.key, required this.content});
 
   final BookContent content;
 
   @override
+  State<BookContentView> createState() => _BookContentViewState();
+}
+
+/// WHY THIS IS NOW A StatefulWidget (it used to be a plain
+/// StatelessWidget rendering just a `ListView.builder`):
+///
+/// ROOT CAUSE OF "resume dialog appears, but the book still opens from
+/// the beginning": `BookReaderController.resumeFromSaved` already
+/// correctly restored `_currentChunkIndex` — a subsequent Play press
+/// genuinely does start speaking (and highlighting) from the resumed
+/// chunk, not from the start of the book. But nothing ever told the
+/// on-screen `ListView` itself to scroll anywhere — it always rendered
+/// at its default (top) scroll position regardless of where playback
+/// was about to resume from. A `ScrollController` is the standard
+/// Flutter mechanism for imperatively moving a scroll view, and it needs
+/// somewhere to live for the widget's lifetime — that's a `State`
+/// object, not something a stateless `build()` can hold.
+class _BookContentViewState extends State<BookContentView> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  /// Turns `BookReaderController.pendingScrollFraction` (a `0.0`–`1.0`
+  /// fraction through the book — see that field's own doc comment for
+  /// why a fraction, not a pixel offset) into an actual scroll jump,
+  /// exactly once per resume.
+  ///
+  /// WHY `addPostFrameCallback`, NOT DONE DIRECTLY IN `build()`: the
+  /// `ListView` needs to have actually laid out at least once before
+  /// `_scrollController.position.maxScrollExtent` is meaningful — before
+  /// the first frame, the scroll view has no attached `ScrollPosition`
+  /// yet at all. Scheduling this for right after the current frame
+  /// finishes is the same safe, standard pattern already used elsewhere
+  /// in this screen for post-build side effects (see
+  /// `_ResumePromptListener`/`_TtsErrorListener` in `reader_screen.dart`).
+  void _applyPendingScroll(double fraction) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final double maxExtent = _scrollController.position.maxScrollExtent;
+      final double target = (fraction * maxExtent).clamp(0.0, maxExtent);
+      _scrollController.jumpTo(target);
+      // Reported back to the controller so this can never fire again for
+      // the same resume — see `consumePendingScroll`'s doc comment.
+      context.read<BookReaderController>().consumePendingScroll();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final double? pendingScrollFraction =
+        context.select<BookReaderController, double?>(
+      (controller) => controller.pendingScrollFraction,
+    );
+
+    if (pendingScrollFraction != null) {
+      _applyPendingScroll(pendingScrollFraction);
+    }
+
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-      itemCount: content.paragraphs.length,
+      itemCount: widget.content.paragraphs.length,
       itemBuilder: (context, index) {
-        final paragraph = content.paragraphs[index];
+        final paragraph = widget.content.paragraphs[index];
         return Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: _ParagraphText(paragraph: paragraph),
