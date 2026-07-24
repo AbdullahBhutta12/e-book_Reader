@@ -31,9 +31,19 @@ class TtsService {
   final FlutterTts _tts;
 
   /// Hardcoded for V1 — matches this app's TXT-only, English-first scope.
-  /// Voice/language selection is a natural fit for Module 7's UI polish
-  /// pass, not this module.
+  /// Voice/language selection remains a deferred, reasonable future
+  /// enhancement — Module 7 adds user control over RATE and PITCH
+  /// specifically, since those (unlike voice/language) apply uniformly
+  /// regardless of which language is speaking.
   static const String _language = 'en-US';
+
+  /// The rate/pitch this service configures a book with by default,
+  /// before any user preference has ever been saved. Named constants
+  /// (not inline literals) specifically so `BookReaderController` and
+  /// `TtsSettingsStore` have one shared source for "what does 'default'
+  /// mean," rather than each guessing the same numbers independently.
+  static const double defaultSpeechRate = 0.5;
+  static const double defaultPitch = 1.0;
 
   /// Registers every native callback `BookReaderController` needs to
   /// react to, translating flutter_tts's raw callback API into plain
@@ -144,10 +154,12 @@ class TtsService {
       // progress, not queue mode.
       await _tts.setQueueMode(0);
       // A moderate default rate — flutter_tts's raw platform default is
-      // often uncomfortably fast for continuous narration. Voice/rate
-      // customization is a Module 7 concern; this is just a sane default.
-      await _tts.setSpeechRate(0.5);
-      await _tts.setPitch(1.0);
+      // often uncomfortably fast for continuous narration. Whatever the
+      // user last chose (Module 7) is applied afterward, on top of this
+      // baseline, by `BookReaderController` — this is just the starting
+      // point for a book that's never had a preference saved.
+      await _tts.setSpeechRate(defaultSpeechRate);
+      await _tts.setPitch(defaultPitch);
 
       // RESUME-PLAYBACK BUG FIX (real-device only — see the trace notes
       // on `BookReaderController.resumeFromSaved`/`_speakCurrentChunk`
@@ -224,6 +236,25 @@ class TtsService {
   /// Stops playback entirely and resets position — a subsequent [speak]
   /// call starts over from the beginning, not from a paused offset.
   Future<bool> stop() => _runAndCheckSuccess(() => _tts.stop());
+
+  /// Changes how fast the engine speaks, from this point forward —
+  /// including mid-book, mid-chunk. Safe to call whether or not
+  /// something is currently speaking; flutter_tts applies it to the
+  /// NEXT utterance either way, which in this app's case means the
+  /// current chunk if the user changes it while paused, or the next
+  /// auto-advanced chunk if changed while actively playing.
+  ///
+  /// [rate] uses flutter_tts's own `0.0`–`1.0` scale (not words-per-
+  /// minute or any other unit) — `BookReaderController` passes through
+  /// whatever the settings UI's slider reports, unchanged.
+  Future<bool> setSpeechRate(double rate) =>
+      _runAndCheckSuccess(() => _tts.setSpeechRate(rate));
+
+  /// Changes the engine's pitch. Same "applies from this point forward"
+  /// behavior as [setSpeechRate]. [pitch] uses flutter_tts's own scale,
+  /// where `1.0` is the engine's normal pitch.
+  Future<bool> setPitch(double pitch) =>
+      _runAndCheckSuccess(() => _tts.setPitch(pitch));
 
   /// Runs a single flutter_tts call, treating a `1` result as success and
   /// EVERY other outcome — a different return value, or any thrown

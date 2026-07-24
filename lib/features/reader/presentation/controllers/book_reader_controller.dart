@@ -1,17 +1,17 @@
-import 'dart:developer' as developer;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show WidgetsBinding, WidgetsBindingObserver, AppLifecycleState;
 import '../../../../core/constants/app_strings.dart';
 import '../../data/reading_progress_store.dart';
 import '../../data/text_extractor_factory.dart';
 import '../../data/tts_service.dart';
+import '../../data/tts_settings_store.dart';
 import '../../domain/models/book_content_result.dart';
 import '../../domain/models/book_file.dart';
 import '../../domain/models/playback_chunk.dart';
 import '../../domain/models/reading_progress.dart';
 import '../../domain/models/tts_init_result.dart';
 import '../../domain/models/tts_playback_state.dart';
+import '../../domain/models/tts_settings.dart';
 import '../../domain/services/playback_chunker.dart';
 
 /// Owns the Reader screen's state: whether the book is loaded, whether
@@ -65,11 +65,13 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
     TtsService? ttsService,
     PlaybackChunker? chunker,
     ReadingProgressStore? progressStore,
+    TtsSettingsStore? settingsStore,
   })  : _book = book,
         _extractorFactory = extractorFactory ?? const TextExtractorFactory(),
         _ttsService = ttsService ?? TtsService(),
         _chunker = chunker ?? const PlaybackChunker(),
-        _progressStore = progressStore ?? ReadingProgressStore() {
+        _progressStore = progressStore ?? ReadingProgressStore(),
+        _settingsStore = settingsStore ?? TtsSettingsStore() {
     // Must be called from the constructor BODY, not the initializer list
     // above — see the doc comment on `TtsService.attachHandlers` for why.
     _ttsService.attachHandlers(
@@ -111,6 +113,10 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
   /// Same DI pattern a fourth time — a test can supply a fake
   /// `ReadingProgressStore` without touching real device storage.
   final ReadingProgressStore _progressStore;
+
+  /// Same DI pattern a fifth time (Module 7) — a test can supply a fake
+  /// `TtsSettingsStore` the same way.
+  final TtsSettingsStore _settingsStore;
 
   /// Guards every state mutation below against firing after this
   /// controller has been disposed. `dispose()` is synchronous, but this
@@ -353,6 +359,18 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
   String? _ttsErrorMessage;
   String? get ttsErrorMessage => _ttsErrorMessage;
 
+  // --- Playback settings (Module 7) --------------------------------------
+
+  /// The user's current speech-rate preference — starts at
+  /// `TtsService.defaultSpeechRate` and is overwritten, once, by whatever
+  /// was previously saved (see `_initializeTts`) as soon as that load
+  /// completes, before the settings UI can ever be shown.
+  double _speechRate = TtsService.defaultSpeechRate;
+  double get speechRate => _speechRate;
+
+  double _pitch = TtsService.defaultPitch;
+  double get pitch => _pitch;
+
   Future<void> _loadContent() async {
     // STABILITY PATCH: this used to start with a
     // `SupportedBookFormat.fromExtension(_book.extension)` call and a
@@ -408,6 +426,18 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
     switch (initResult) {
       case TtsInitSuccess():
         _isTtsReady = true;
+        // MODULE 7: apply whatever rate/pitch the user last saved, if
+        // anything — done here (once, right after a successful init)
+        // rather than inside `TtsService.initialize()` itself, so that
+        // class stays focused purely on "is the engine usable," with no
+        // knowledge of settings persistence at all.
+        final TtsSettings? savedSettings = await _settingsStore.load();
+        if (savedSettings != null) {
+          _speechRate = savedSettings.speechRate;
+          _pitch = savedSettings.pitch;
+          await _ttsService.setSpeechRate(_speechRate);
+          await _ttsService.setPitch(_pitch);
+        }
       case TtsInitUnavailable():
         _isTtsReady = false;
         _ttsUnavailableReason = AppStrings.ttsUnavailableMessage;
@@ -534,6 +564,30 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
     _notify();
   }
 
+  /// Called by the settings sheet's rate slider as the user drags it.
+  /// Applies the new rate to the engine immediately (audible even
+  /// mid-book — see `TtsService.setSpeechRate`) and persists it so it's
+  /// still in effect the next time ANY book is opened, not just this
+  /// one.
+  Future<void> setSpeechRate(double rate) async {
+    if (_speechRate == rate) return; // avoid a no-op rebuild
+    _speechRate = rate;
+    _notify();
+    await _ttsService.setSpeechRate(rate);
+    // Fire-and-forget, same reasoning as `_saveProgress`: the slider
+    // shouldn't wait on a disk write to feel responsive.
+    _settingsStore.save(TtsSettings(speechRate: _speechRate, pitch: _pitch));
+  }
+
+  /// Same shape as [setSpeechRate], for pitch.
+  Future<void> setPitch(double pitch) async {
+    if (_pitch == pitch) return; // avoid a no-op rebuild
+    _pitch = pitch;
+    _notify();
+    await _ttsService.setPitch(pitch);
+    _settingsStore.save(TtsSettings(speechRate: _speechRate, pitch: _pitch));
+  }
+
   /// Called by the UI when the user chooses "Resume" on the resume
   /// prompt. Points playback at whichever chunk currently contains the
   /// saved offset — see `_chunkIndexForOffset` for why a chunk-level
@@ -556,18 +610,6 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
     _pendingResumeLocalOffset = (offset - resumedChunk.startOffset).clamp(
       0,
       resumedChunk.text.length,
-    );
-    // TEMPORARY DEBUG LOG — remove once resume playback is confirmed
-    // fixed on-device. Checkpoint 1 of 3 (see `_speakCurrentChunk` for
-    // checkpoint 2, `_handleProgress` for checkpoint 3).
-    developer.log(
-      'CHECKPOINT 1 resumeFromSaved(): offset=$offset '
-      '_currentChunkIndex=$_currentChunkIndex '
-      '_pendingResumeLocalOffset=$_pendingResumeLocalOffset '
-      '_chunkProgressBase=$_chunkProgressBase '
-      '_lastChunkLocalOffset=$_lastChunkLocalOffset '
-      'highlightRange=$_highlightRange',
-      name: 'ResumeDebug',
     );
     _pendingScrollFraction =
         _totalCharacters == 0 ? null : offset / _totalCharacters;
@@ -622,20 +664,6 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
         (seekOffset > 0 && seekOffset < chunk.text.length)
         ? chunk.text.substring(seekOffset)
         : chunk.text;
-
-    // TEMPORARY DEBUG LOG — remove once resume playback is confirmed
-    // fixed on-device. Checkpoint 2 of 3 (see `resumeFromSaved` for
-    // checkpoint 1, `_handleProgress` for checkpoint 3).
-    developer.log(
-      'CHECKPOINT 2 _speakCurrentChunk(): _currentChunkIndex='
-      '$_currentChunkIndex chunk.startOffset=${chunk.startOffset} '
-      'seekOffset=$seekOffset _chunkProgressBase=$_chunkProgressBase '
-      '_lastChunkLocalOffset=$_lastChunkLocalOffset '
-      'highlightRange=$_highlightRange '
-      'textToSpeak.length=${textToSpeak.length} (chunk.text.length='
-      '${chunk.text.length})',
-      name: 'ResumeDebug',
-    );
 
     final bool started = await _ttsService.speak(textToSpeak);
 
@@ -753,27 +781,6 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
     // playback, but (unlike `_highlightRange`) never cleared by `stop()`,
     // so the progress indicator still reflects real progress afterward.
     _lastKnownOffset = globalStart;
-
-    // TEMPORARY DEBUG LOG — remove once resume playback is confirmed
-    // fixed on-device. Checkpoint 3 of 3 (see `resumeFromSaved` for
-    // checkpoint 1, `_speakCurrentChunk` for checkpoint 2). Logged only
-    // for the FIRST word of whatever's currently speaking (chunkLocalStart
-    // close to `_chunkProgressBase`) so a full chunk's worth of words
-    // doesn't flood the log — this is the one moment that actually
-    // proves (or disproves) that playback picked up from the resumed
-    // position: `highlightRange` here should land near the ORIGINAL
-    // saved offset, not near `chunk.startOffset` alone.
-    if (chunkLocalStart - _chunkProgressBase <= localEnd - localStart) {
-      developer.log(
-        'CHECKPOINT 3 _handleProgress() first word: word="$word" '
-        '_currentChunkIndex=$_currentChunkIndex '
-        'chunk.startOffset=${chunk.startOffset} '
-        '_chunkProgressBase=$_chunkProgressBase '
-        '_lastChunkLocalOffset=$_lastChunkLocalOffset '
-        'highlightRange=$_highlightRange',
-        name: 'ResumeDebug',
-      );
-    }
 
     _notify();
   }

@@ -107,4 +107,10 @@ class AppStrings {
       'up where you left off, or start over from the beginning?';
   static const String resumeButtonLabel = 'Resume';
   static const String startOverButtonLabel = 'Start Over';
+
+  // --- Playback settings (Module 7) ---------------------------------------
+  static const String playbackSettingsButtonTooltip = 'Playback settings';
+  static const String playbackSettingsTitle = 'Playback Settings';
+  static const String speechRateLabel = 'Speech Rate';
+  static const String pitchLabel = 'Pitch';
 }

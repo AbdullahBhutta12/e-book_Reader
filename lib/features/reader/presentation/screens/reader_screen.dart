@@ -11,6 +11,7 @@ import '../controllers/book_reader_controller.dart';
 import '../widgets/book_content_view.dart';
 import '../widgets/book_info_sheet.dart';
 import '../widgets/playback_control_bar.dart';
+import '../widgets/playback_settings_sheet.dart';
 
 /// Shown after a book has been successfully imported and validated.
 ///
@@ -75,6 +76,11 @@ class _ReaderView extends StatelessWidget {
       appBar: AppBar(
         title: Text(book.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            tooltip: AppStrings.playbackSettingsButtonTooltip,
+            icon: const Icon(Icons.tune),
+            onPressed: () => PlaybackSettingsSheet.show(context),
+          ),
           IconButton(
             tooltip: AppStrings.bookInfoButtonTooltip,
             icon: const Icon(Icons.info_outline),
