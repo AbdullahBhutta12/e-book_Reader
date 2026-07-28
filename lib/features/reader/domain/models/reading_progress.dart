@@ -4,6 +4,7 @@ class ReadingProgress {
   const ReadingProgress({
     required this.bookPath,
     required this.characterOffset,
+    required this.totalCharacters,
     required this.lastReadAt,
   });
 
@@ -31,8 +32,26 @@ class ReadingProgress {
   /// resume time — see `BookReaderController._chunkIndexForOffset`.
   final int characterOffset;
 
+  /// MODULE 8 ADDITION: the book's total extracted character count at
+  /// the moment this was saved — i.e. `BookContent.fullText.length`.
+  /// Added specifically so the Library screen can show a real progress
+  /// PERCENTAGE per book without extracting every library book's full
+  /// text just to count its characters (see the Module 8 architecture
+  /// note on why that eager cost was rejected). `0` for entries saved
+  /// before this field existed (`ReadingProgressStore.load` defaults a
+  /// missing value to `0` rather than failing to parse) — see [fraction].
+  final int totalCharacters;
+
   /// When this progress was last saved — shown to the user as part of
   /// deciding whether "resume" is even worth offering (see
   /// `BookReaderController`'s resume-prompt logic).
   final DateTime lastReadAt;
+
+  /// How far through the book this position is, as a `0.0`–`1.0`
+  /// fraction. `0` when [totalCharacters] is unknown (either genuinely
+  /// `0`, or an entry saved before this field existed) — a book with no
+  /// denominator has no meaningful percentage to show, and `0` is a safe,
+  /// self-correcting display value rather than a divide-by-zero.
+  double get fraction =>
+      totalCharacters == 0 ? 0 : characterOffset / totalCharacters;
 }

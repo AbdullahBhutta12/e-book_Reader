@@ -54,6 +54,18 @@ dependencies:
   # legacy and slated for future deprecation, in favor of this one.
   shared_preferences: ^2.5.5
 
+  # path_provider: gives access to a directory the OS guarantees this
+  # app owns and won't clear out from under it (getApplicationDocuments
+  # Directory) — published by the Flutter team itself (flutter.dev,
+  # verified publisher), 5.5k+ likes, actively maintained. This is what
+  # makes a genuinely persistent library possible: file_picker's own
+  # returned path is a transient cache copy (see BookFile.identityKey's
+  # doc comment for the bug that taught us this) — Module 8 copies each
+  # imported book's bytes into a path_provider-managed directory exactly
+  # once, so the library keeps working even if the original source file
+  # is later deleted, moved, or the picker's own cache is cleared.
+  path_provider: ^2.1.6
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

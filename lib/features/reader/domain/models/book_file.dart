@@ -86,15 +86,21 @@ class BookFile {
   /// `sizeInBytes`. Storing it as a field would mean carrying redundant
   /// data that could theoretically drift out of sync with the real size —
   /// computing it on read means there's only ever one source of truth.
-  String get formattedSize {
+  String get formattedSize => formatBytes(sizeInBytes);
+
+  /// MODULE 8: extracted from what used to be [formattedSize]'s own
+  /// inline body, so `LibraryBook` (a separate model that also has a
+  /// `sizeInBytes` to display) can reuse the exact same formatting logic
+  /// instead of a second, separately-maintained copy of it.
+  static String formatBytes(int bytes) {
     const int kb = 1024;
     const int mb = kb * 1024;
 
-    if (sizeInBytes >= mb) {
-      return '${(sizeInBytes / mb).toStringAsFixed(2)} MB';
-    } else if (sizeInBytes >= kb) {
-      return '${(sizeInBytes / kb).toStringAsFixed(2)} KB';
+    if (bytes >= mb) {
+      return '${(bytes / mb).toStringAsFixed(2)} MB';
+    } else if (bytes >= kb) {
+      return '${(bytes / kb).toStringAsFixed(2)} KB';
     }
-    return '$sizeInBytes B';
+    return '$bytes B';
   }
 }

@@ -831,6 +831,12 @@ class BookReaderController extends ChangeNotifier with WidgetsBindingObserver {
       ReadingProgress(
         bookPath: _book.identityKey,
         characterOffset: _lastKnownOffset,
+        // MODULE 8: `_totalCharacters` is already computed once in
+        // `_loadContent` (see that field's own doc comment) — passing it
+        // through here costs nothing extra to compute, and is what lets
+        // the Library screen show a real percentage per book without
+        // re-extracting every book's text itself.
+        totalCharacters: _totalCharacters,
         lastReadAt: DateTime.now(),
       ),
     );

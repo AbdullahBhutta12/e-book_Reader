@@ -113,4 +113,24 @@ class AppStrings {
   static const String playbackSettingsTitle = 'Playback Settings';
   static const String speechRateLabel = 'Speech Rate';
   static const String pitchLabel = 'Pitch';
+
+  // --- Library (Module 8) -------------------------------------------------
+  static const String continueReadingLabel = 'Continue Reading';
+  static const String libraryTitle = 'Your Library';
+  static const String librarySearchHint = 'Search your library';
+  static const String libraryEmptySearchMessage =
+      'No books match your search.';
+  static const String libraryFileMissingLabel =
+      'File unavailable — tap the delete icon to remove it';
+  static const String deleteBookButtonTooltip = 'Delete book';
+  static const String deleteBookDialogTitle = 'Delete this book?';
+  static const String deleteBookDialogMessage =
+      'This removes the book and its reading progress from your library. '
+      'This can\'t be undone.';
+  static const String deleteButtonLabel = 'Delete';
+  static const String cancelButtonLabel = 'Cancel';
+  static const String sortButtonTooltip = 'Sort books';
+  static const String sortByRecentlyOpened = 'Recently Opened';
+  static const String sortByTitle = 'Title';
+  static const String sortByRecentlyImported = 'Recently Imported';
 }

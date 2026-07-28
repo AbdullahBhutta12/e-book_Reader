@@ -32,6 +32,7 @@ class ReadingProgressStore {
   Future<void> save(ReadingProgress progress) async {
     final String json = jsonEncode({
       'characterOffset': progress.characterOffset,
+      'totalCharacters': progress.totalCharacters,
       'lastReadAt': progress.lastReadAt.toIso8601String(),
     });
     await _prefs.setString(_keyFor(progress.bookPath), json);
@@ -53,6 +54,19 @@ class ReadingProgressStore {
       return ReadingProgress(
         bookPath: bookPath,
         characterOffset: map['characterOffset'] as int,
+        // MODULE 8 BACKWARD COMPATIBILITY: entries saved by Module 6/7,
+        // before this field existed, have no 'totalCharacters' key at
+        // all — casting straight to `int` would throw for every one of
+        // them, and this method's own catch-all below would then treat
+        // perfectly good, existing resume data as "nothing saved."
+        // Reading it as `int?` and defaulting to `0` keeps old entries
+        // parsing successfully; `ReadingProgress.fraction` already
+        // treats `0` as "no percentage to show" safely, and the very
+        // next save from this same book (any pause/stop) fills in the
+        // real value going forward. `characterOffset` — the field the
+        // actual resume mechanism depends on — is completely unaffected
+        // either way.
+        totalCharacters: (map['totalCharacters'] as int?) ?? 0,
         lastReadAt: DateTime.parse(map['lastReadAt'] as String),
       );
     } catch (_) {
